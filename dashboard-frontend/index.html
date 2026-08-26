@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Incident Triage Dashboard</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0f172a;color:#e2e8f0;min-height:100vh}
+.app{max-width:1200px;margin:0 auto;padding:24px}
+h1{font-size:1.5rem;margin-bottom:4px;color:#f8fafc}
+.subtitle{color:#94a3b8;font-size:.85rem;margin-bottom:20px}
+.filters{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center}
+.filters span{color:#94a3b8;font-size:.8rem;margin-right:4px}
+.filter-btn{padding:5px 14px;border-radius:6px;border:1px solid #334155;background:#1e293b;color:#cbd5e1;cursor:pointer;font-size:.8rem;transition:all .15s}
+.filter-btn:hover{border-color:#475569;background:#334155}
+.filter-btn.active{background:#3b82f6;color:#fff;border-color:#3b82f6}
+.status-filter{margin-left:auto}
+.table-wrap{background:#1e293b;border-radius:10px;overflow:hidden;border:1px solid #334155}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;padding:10px 14px;font-size:.75rem;text-transform:uppercase;letter-spacing:.05em;color:#94a3b8;border-bottom:1px solid #334155;background:#0f172a}
+td{padding:10px 14px;font-size:.85rem;border-bottom:1px solid #1e293b80}
+tr:last-child td{border-bottom:none}
+tr:hover{background:#33415540;cursor:pointer}
+tr.selected{background:#3b82f620}
+.sev{padding:3px 10px;border-radius:99px;font-size:.72rem;font-weight:600;display:inline-block;min-width:52px;text-align:center}
+.sev-critical{background:#dc262630;color:#f87171;border:1px solid #dc262650}
+.sev-high{background:#ea580c30;color:#fb923c;border:1px solid #ea580c50}
+.sev-medium{background:#eab30830;color:#facc15;border:1px solid #eab30850}
+.sev-low{background:#22c55e30;color:#4ade80;border:1px solid #22c55e50}
+.status{padding:3px 10px;border-radius:99px;font-size:.72rem;font-weight:500}
+.st-new{background:#3b82f620;color:#60a5fa;border:1px solid #3b82f640}
+.st-triaging{background:#a855f720;color:#c084fc;border:1px solid #a855f740}
+.st-acknowledged{background:#eab30820;color:#facc15;border:1px solid #eab30840}
+.st-resolved{background:#22c55e20;color:#4ade80;border:1px solid #22c55e40}
+.detail-panel{margin-top:16px;background:#1e293b;border-radius:10px;border:1px solid #334155;padding:20px;animation:fadeIn .2s}
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+.detail-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px}
+.detail-title{font-size:1.1rem;font-weight:600;color:#f8fafc}
+.detail-close{background:none;border:1px solid #475569;color:#94a3b8;border-radius:6px;padding:4px 12px;cursor:pointer;font-size:.8rem}
+.detail-close:hover{background:#334155;color:#e2e8f0}
+.detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}
+.detail-field label{display:block;font-size:.7rem;text-transform:uppercase;color:#64748b;margin-bottom:2px;letter-spacing:.04em}
+.detail-field span{font-size:.88rem;color:#e2e8f0}
+.timeline{border-left:2px solid #334155;padding-left:16px;margin-top:12px}
+.timeline-item{position:relative;padding-bottom:14px}
+.timeline-item::before{content:"";position:absolute;left:-21px;top:3px;width:10px;height:10px;border-radius:50%;background:#475569;border:2px solid #1e293b}
+.timeline-item:last-child{padding-bottom:0}
+.timeline-time{font-size:.7rem;color:#64748b}
+.timeline-text{font-size:.82rem;color:#cbd5e1}
+.empty{padding:40px;text-align:center;color:#64748b;font-size:.9rem}
+.badge{font-size:.7rem;background:#475569;color:#e2e8f0;padding:2px 8px;border-radius:4px;margin-left:6px}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useMemo, useEffect } = React;
+
+const API = "/api/incidents";
+
+const SEVERITIES = ["critical","high","medium","low"];
+const STATUSES = ["new","triaging","acknowledged","resolved"];
+
+const SEV_ORDER = { critical: 0, high: 1, medium: 2, low: 3 };
+
+const DEMO_INCIDENTS = [
+  {id:"INC-001",title:"Database cluster failover detected",severity:"critical",status:"triaging",service:"db-primary",alert_count:12,created_at:"2025-01-15T08:23:00Z",updated_at:"2025-01-15T08:45:00Z",description:"Primary DB node became unresponsive causing automatic failover. Multiple connection errors reported.",assignee:"oncall-infra",notifications:{slack:true,pagerduty:true},timeline:[{time:"08:23",text:"Alert received: DB primary unreachable"},{time:"08:25",text:"Correlated 12 related alerts"},{time:"08:26",text:"Slack notification sent to #incidents"},{time:"08:26",text:"PagerDuty incident created"},{time:"08:30",text:"Oncall engineer acknowledged"}]},
+  {id:"INC-002",title:"API latency exceeding SLO threshold",severity:"high",status:"acknowledged",service:"api-gateway",alert_count:5,created_at:"2025-01-15T09:10:00Z",updated_at:"2025-01-15T09:30:00Z",description:"P99 latency on api-gateway exceeded 2s threshold for 10 minutes.",assignee:"jane.doe",notifications:{slack:true,pagerduty:true},timeline:[{time:"09:10",text:"Alert: p99 latency > 2s"},{time:"09:11",text:"5 alerts correlated"},{time:"09:12",text:"Slack notification sent"},{time:"09:15",text:"PagerDuty triggered"},{time:"09:20",text:"Acknowledged by jane.doe"}]},
+  {id:"INC-003",title:"Disk usage above 85% on worker-03",severity:"medium",status:"new",service:"worker-pool",alert_count:2,created_at:"2025-01-15T10:05:00Z",updated_at:"2025-01-15T10:05:00Z",description:"Worker node worker-03 disk usage at 87% and rising.",assignee:null,notifications:{slack:true,pagerduty:false},timeline:[{time:"10:05",text:"Alert received: disk usage 87%"},{time:"10:05",text:"Slack notification sent to #infra"}]},
+  {id:"INC-004",title:"SSL certificate expiry in 7 days",severity:"low",status:"new",service:"lb-prod",alert_count:1,created_at:"2025-01-15T07:00:00Z",updated_at:"2025-01-15T07:00:00Z",description:"TLS certificate for *.prod.example.com expires on Jan 22.",assignee:null,notifications:{slack:true,pagerduty:false},timeline:[{time:"07:00",text:"Alert: certificate expiry warning"},{time:"07:00",text:"Slack notification sent"}]},
+  {id:"INC-005",title:"Memory leak in auth-service pods",severity:"high",status:"triaging",service:"auth-service",alert_count:8,created_at:"2025-01-15T06:40:00Z",updated_at:"2025-01-15T07:15:00Z",description:"auth-service pods showing steadily increasing memory, OOMKills observed.",assignee:"oncall-platform",notifications:{slack:true,pagerduty:true},timeline:[{time:"06:40",text:"Alert: memory usage > 90%"},{time:"06:42",text:"8 alerts correlated across pods"},{time:"06:43",text:"Slack + PagerDuty notifications sent"},{time:"07:00",text:"OOMKill event on auth-service-7b8d"}]},
+  {id:"INC-006",title:"Payment gateway timeout rate elevated",severity:"critical",status:"new",service:"payment-svc",alert_count:3,created_at:"2025-01-15T10:30:00Z",updated_at:"2025-01-15T10:30:00Z",description:"Timeout rate on payment gateway at 15%, well above 2% threshold. Revenue impact likely.",assignee:null,notifications:{slack:true,pagerduty:true},timeline:[{time:"10:30",text:"Alert: payment timeout rate 15%"},{time:"10:30",text:"3 alerts correlated"},{time:"10:30",text:"Critical PagerDuty + Slack sent"}]}
+];
+
+function formatTime(iso) {
+  return new Date(iso).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
+}
+
+function App() {
+  const [incidents, setIncidents] = useState([]);
+  const [sevFilter, setSevFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [selected, setSelected] = useState(null);
+
+  useEffect(() => {
+    fetch(API).then(r => r.json()).then(d => setIncidents(Array.isArray(d)?d:[])).catch(() => setIncidents(DEMO_INCIDENTS));
+  }, []);
+
+  const filtered = useMemo(() => {
+    return incidents
+      .filter(i => sevFilter === "all" || i.severity === sevFilter)
+      .filter(i => statusFilter === "all" || i.status === statusFilter)
+      .sort((a,b) => SEV_ORDER[a.severity] - SEV_ORDER[b.severity] || new Date(b.created_at) - new Date(a.created_at));
+  }, [incidents, sevFilter, statusFilter]);
+
+  const counts = useMemo(() => {
+    const c = {severity:{}, status:{}};
+    incidents.forEach(i => { c.severity[i.severity]=(c.severity[i.severity]||0)+1; c.status[i.status]=(c.status[i.status]||0)+1; });
+    return c;
+  }, [incidents]);
+
+  const detail = selected ? incidents.find(i => i.id === selected) : null;
+
+  return (
+    <div className="app">
+      <h1>Incident Triage Dashboard</h1>
+      <p className="subtitle">{incidents.length} incidents tracked &middot; {counts.status.new||0} new &middot; {counts.status.triaging||0} triaging</p>
+
+      <div className="filters">
+        <span>Severity:</span>
+        <button className={`filter-btn ${sevFilter==="all"?"active":""}`} onClick={()=>setSevFilter("all")}>All</button>
+        {SEVERITIES.map(s => (
+          <button key={s} className={`filter-btn ${sevFilter===s?"active":""}`} onClick={()=>setSevFilter(s)}>
+            {s.charAt(0).toUpperCase()+s.slice(1)} <span className="badge">{counts.severity[s]||0}</span>
+          </button>
+        ))}
+        <div className="status-filter" style={{display:"flex",gap:8,alignItems:"center"}}>
+          <span>Status:</span>
+          <button className={`filter-btn ${statusFilter==="all"?"active":""}`} onClick={()=>setStatusFilter("all")}>All</button>
+          {STATUSES.map(s => (
+            <button key={s} className={`filter-btn ${statusFilter===s?"active":""}`} onClick={()=>setStatusFilter(s)}>
+              {s.charAt(0).toUpperCase()+s.slice(1)}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr><th>ID</th><th>Severity</th><th>Title</th><th>Service</th><th>Alerts</th><th>Status</th><th>Updated</th></tr>
+          </thead>
+          <tbody>
+            {filtered.length === 0 ? (
+              <tr><td colSpan="7" className="empty">No incidents match filters</td></tr>
+            ) : filtered.map(inc => (
+              <tr key={inc.id} className={selected===inc.id?"selected":""} onClick={()=>setSelected(inc.id)}>
+                <td style={{fontFamily:"monospace",fontSize:".8rem"}}>{inc.id}</td>
+                <td><span className={`sev sev-${inc.severity}`}>{inc.severity.toUpperCase()}</span></td>
+                <td style={{maxWidth:300,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{inc.title}</td>
+                <td style={{fontFamily:"monospace",fontSize:".8rem"}}>{inc.service}</td>
+                <td style={{textAlign:"center"}}>{inc.alert_count}</td>
+                <td><span className={`status st-${inc.status}`}>{inc.status}</span></td>
+                <td style={{fontSize:".8rem",color:"#94a3b8"}}>{formatTime(inc.updated_at)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {detail && (
+        <div className="detail-panel">
+          <div className="detail-header">
+            <div>
+              <div className="detail-title">{detail.id}: {detail.title}</div>
+            </div>
+            <button className="detail-close" onClick={()=>setSelected(null)}>Close</button>
+          </div>
+          <div className="detail-grid">
+            <div className="detail-field"><label>Severity</label><span className={`sev sev-${detail.severity}`}>{detail.severity.toUpperCase()}</span></div>
+            <div className="detail-field"><label>Status</label><span className={`status st-${detail.status}`}>{detail.status}</span></div>
+            <div className="detail-field"><label>Service</label><span>{detail.service}</span></div>
+            <div className="detail-field"><label>Assignee</label><span>{detail.assignee || "Unassigned"}</span></div>
+            <div className="detail-field"><label>Alerts Correlated</label><span>{detail.alert_count}</span></div>
+            <div className="detail-field"><label>Notifications</label><span>{detail.notifications?.pagerduty?"Slack + PagerDuty":"Slack only"}</span></div>
+            <div className="detail-field"><label>Created</label><span>{new Date(detail.created_at).toLocaleString()}</span></div>
+            <div className="detail-field"><label>Last Updated</label><span>{new Date(detail.updated_at).toLocaleString()}</span></div>
+          </div>
+          <div className="detail-field" style={{marginBottom:16}}><label>Description</label><span>{detail.description}</span></div>
+          <div className="detail-field"><label>Timeline</label>
+            <div className="timeline">
+              {(detail.timeline||[]).map((t,i) => (
+                <div key={i} className="timeline-item">
+                  <div className="timeline-time">{t.time}</div>
+                  <div className="timeline-text">{t.text}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
